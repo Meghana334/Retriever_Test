@@ -1,0 +1,38 @@
+[project]
+name = "bc-rag"
+version = "0.0.1"
+description = "\"A Vision Rag with Long Term Memory\""
+authors = [
+    {name = "Kalanithii",email = "thananseyakalanithi@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "langgraph (>=0.4.8,<0.5.0)",
+    "langchain[llms] (>=0.3.25,<0.4.0)",
+    "langfuse[all] (>=3.0.0,<4.0.0)",
+    "fastapi[all] (>=0.115.12,<0.116.0)",
+    "rich (>=14.0.0,<15.0.0)",
+    "google-genai (>=1.19.0,<2.0.0)",
+    "python-dotenv (>=1.1.0,<2.0.0)",
+    "pymupdf (>=1.26.0,<2.0.0)",
+    "langchain-milvus (>=0.2.0,<0.3.0)",
+    "pymilvus (>=2.5.11,<3.0.0)",
+    "psycopg[binary] (>=3.2.9,<4.0.0)",
+    "langchain-postgres (>=0.0.14,<0.0.15)",
+    "pillow (>=11.2.1,<12.0.0)",
+    "langchain-huggingface (>=0.3.0,<0.4.0)",
+    "langchain-community (==0.3.20)",
+    "cohere (>=5.15.0,<6.0.0)",
+    "pypdf (>=5.6.0,<6.0.0)",
+    "streamlit (>=1.46.0,<2.0.0)",
+    "requests (>=2.32.4,<3.0.0)",
+    "mistralai (>=1.9.3,<2.0.0)",
+    "scikit-learn (>=1.7.1,<2.0.0)",
+    "sentence-transformers[all] (>=5.0.0,<6.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
