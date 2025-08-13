@@ -35,7 +35,7 @@ class BaseSearchModule(ABC):
         pass
 
 
-class MilvusBaseModule(BaseSearchModule):
+class MilvusBaseModule(BaseSearchModule, ABC):
     """Base class for Milvus-based search modules"""
     
     def __init__(self, collection_name: str, embeddings, host: str = "localhost", port: str = "19530"):
