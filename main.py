@@ -33,19 +33,37 @@ if not COHERE_API_KEY:
 DEFAULT_COLLECTION_NAME = "rag_documents"
 
 
+def create_output_directories(base_output_dir: str = "output"):
+    """Create organized output directory structure"""
+    directories = {
+        'base': base_output_dir,
+        'json': os.path.join(base_output_dir, 'JSON'),
+        'csv': os.path.join(base_output_dir, 'CSV'),
+        'xlsx': os.path.join(base_output_dir, 'XLSX')
+    }
+
+    for dir_name, dir_path in directories.items():
+        os.makedirs(dir_path, exist_ok=True)
+        logger.info(f"📁 Created/verified directory: {dir_path}")
+
+    return directories
+
+
 class RAGPipeline:
     """Multi-modal RAG Pipeline with different search strategies"""
 
     def __init__(
-        self,
-        collection_name: str = DEFAULT_COLLECTION_NAME,
-        milvus_host: str = "localhost",
-        milvus_port: str = "19530",
+            self,
+            collection_name: str = DEFAULT_COLLECTION_NAME,
+            milvus_host: str = "localhost",
+            milvus_port: str = "19530",
+            output_base_dir: str = "output",
     ):
         self.collection_name = collection_name
         self.cohere_embedder = CohereEmbeddings(COHERE_API_KEY)
         self.doc_processor = DocumentProcessor()
         self.documents = []
+        self.output_dirs = create_output_directories(output_base_dir)
 
         # Initialize all search modules
         self.hybrid_search = HybridSearchModule(
@@ -72,6 +90,7 @@ class RAGPipeline:
         self.keyword_search = KeywordSearchModule()
 
         logger.info(f"✅ Initialized RAG Pipeline with collection: {collection_name}")
+        logger.info(f"📂 Output directories: {self.output_dirs}")
 
     def load_documents(self, pdf_path: str):
         """Load PDF documents and initialize all search modules"""
@@ -111,6 +130,18 @@ class RAGPipeline:
             logger.error(f"Invalid search type: {search_type}")
             return []
 
+    def get_output_paths(self, search_type: int):
+        """Generate organized output file paths"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        search_suffix = f"type_{search_type}"
+        base_filename = f"rag_results_{search_suffix}_{timestamp}"
+
+        return {
+            'csv': os.path.join(self.output_dirs['csv'], f"{base_filename}.csv"),
+            'json': os.path.join(self.output_dirs['json'], f"rag_metadata_{search_suffix}_{timestamp}.json"),
+            'xlsx': os.path.join(self.output_dirs['xlsx'], f"{base_filename}.xlsx")
+        }
+
 
 def get_search_type_name(search_type: int) -> str:
     """Get human-readable search type name"""
@@ -124,19 +155,21 @@ def get_search_type_name(search_type: int) -> str:
 
 
 def run_pipeline(
-    pdf_path: str = None,
-    csv_path: str = None,
-    search_type: int = 1,
-    output_csv: str = None,
-    output_json: str = None,
+        pdf_path: str = None,
+        csv_path: str = None,
+        search_type: int = 1,
+        output_base_dir: str = "output",
 ):
-    """Run the complete RAG pipeline with specified search type"""
+    """Run the complete RAG pipeline with specified search type and organized output"""
 
     start_time = time.time()
     search_type_name = get_search_type_name(search_type)
 
     logger.info(f"🚀 Starting RAG Pipeline with {search_type_name}")
-    pipeline = RAGPipeline()
+    pipeline = RAGPipeline(output_base_dir=output_base_dir)
+
+    # Get organized output paths
+    output_paths = pipeline.get_output_paths(search_type)
 
     if pdf_path:
         doc_load_start = time.time()
@@ -149,8 +182,7 @@ def run_pipeline(
         return
 
     logger.info(f"📊 Reading CSV file: {csv_path}")
-    df1 = pd.read_csv(csv_path)
-    df = df1[:20]
+    df = pd.read_csv(csv_path)
 
     print(df)
 
@@ -175,7 +207,7 @@ def run_pipeline(
     processed_questions = 0
 
     for idx, row in tqdm(
-        df.iterrows(), total=len(df), desc=f"Processing with {search_type_name}"
+            df.iterrows(), total=len(df), desc=f"Processing with {search_type_name}"
     ):
         question_start_time = time.time()
         question = str(row["QUESTION"]).strip()
@@ -258,9 +290,10 @@ def run_pipeline(
         processed_questions += 1
         question_time = time.time() - question_start_time
         logger.info(
-            f"⏱️ Question {idx+1}: Total={question_time:.3f}s, Search={search_time:.3f}s"
+            f"⏱️ Question {idx + 1}: Total={question_time:.3f}s, Search={search_time:.3f}s"
         )
 
+    # Create results DataFrame
     results_df = pd.DataFrame(
         {
             "QUESTION": df["QUESTION"],
@@ -280,23 +313,24 @@ def run_pipeline(
         }
     )
 
-    if not output_csv:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        search_suffix = f"type_{search_type}"
-        output_csv = f"rag_results_{search_suffix}_{timestamp}.csv"
+    # Add Combined Classification column
+    # True if ANY of the three binary classifications is True
+    results_df["COMBINED CLASSIFICATION"] = (
+        results_df["BINARY CLASSIFICATION 1"] |
+        results_df["BINARY CLASSIFICATION 2"] |
+        results_df["BINARY CLASSIFICATION 3"]
+    )
 
-    if not output_json:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        search_suffix = f"type_{search_type}"
-        output_json = f"rag_metadata_{search_suffix}_{timestamp}.json"
+    # Save CSV file to organized structure
+    results_df.to_csv(output_paths['csv'], index=False)
+    logger.info(f"📁 CSV results saved to {output_paths['csv']}")
 
-    results_df.to_csv(output_csv, index=False)
-    logger.info(f"📁 CSV results saved to {output_csv}")
-
-    with open(output_json, "w", encoding="utf-8") as f:
+    # Save JSON metadata to organized structure
+    with open(output_paths['json'], "w", encoding="utf-8") as f:
         json.dump(all_metadata, f, ensure_ascii=False, indent=4)
-    logger.info(f"📁 Metadata JSON saved to {output_json}")
+    logger.info(f"📁 Metadata JSON saved to {output_paths['json']}")
 
+    # Calculate performance metrics
     total_time = time.time() - start_time
     avg_query_time = (
         total_query_time / processed_questions if processed_questions > 0 else 0
@@ -313,6 +347,7 @@ def run_pipeline(
         columns=["Metric", "Value"],
     )
 
+    # Calculate accuracy metrics (including combined classification)
     accuracy_rows = []
     for k in [1, 2, 3]:
         scores = results_df[f"SIMILARITY SCORE {k}"]
@@ -335,20 +370,53 @@ def run_pipeline(
                     f"{accuracy:.2f}%",
                 ]
             )
+
+    # Add combined classification accuracy
+    combined_accuracy = results_df["COMBINED CLASSIFICATION"].sum() / len(results_df) * 100
+    accuracy_rows.append(
+        [
+            "Combined",
+            "N/A",
+            "N/A",
+            "N/A",
+            f"{combined_accuracy:.2f}%"
+        ]
+    )
+
     accuracy_df = pd.DataFrame(
         accuracy_rows, columns=["K", "Avg Similarity", "Max", "Min", "Accuracy ≥0.6"]
     )
 
-    output_excel = output_csv.replace(".csv", ".xlsx")
-    with pd.ExcelWriter(output_excel, engine="xlsxwriter") as writer:
+    # Save Excel file with multiple sheets to organized structure
+    with pd.ExcelWriter(output_paths['xlsx'], engine="xlsxwriter") as writer:
         results_df.to_excel(writer, sheet_name="Results", index=False)
         performance_summary.to_excel(
             writer, sheet_name="Performance Summary", index=False
         )
         accuracy_df.to_excel(writer, sheet_name="Accuracy Summary", index=False)
-    logger.info(f"📁 Excel results saved to {output_excel}")
+    logger.info(f"📁 Excel results saved to {output_paths['xlsx']}")
 
-    return results_df, output_csv, output_json, output_excel
+    # Summary of all output files
+    logger.info("=" * 60)
+    logger.info("📋 OUTPUT SUMMARY")
+    logger.info("=" * 60)
+    logger.info(f"🗂️  Output Directory Structure:")
+    logger.info(f"   📂 {pipeline.output_dirs['base']}/")
+    logger.info(f"   ├── 📂 CSV/")
+    logger.info(f"   │   └── 📄 {os.path.basename(output_paths['csv'])}")
+    logger.info(f"   ├── 📂 JSON/")
+    logger.info(f"   │   └── 📄 {os.path.basename(output_paths['json'])}")
+    logger.info(f"   └── 📂 XLSX/")
+    logger.info(f"       └── 📄 {os.path.basename(output_paths['xlsx'])}")
+    logger.info("=" * 60)
+
+    # Log combined classification summary
+    logger.info(f"🎯 Combined Classification Summary:")
+    logger.info(f"   Total questions: {len(results_df)}")
+    logger.info(f"   Successfully classified (any K): {results_df['COMBINED CLASSIFICATION'].sum()}")
+    logger.info(f"   Combined accuracy: {combined_accuracy:.2f}%")
+
+    return results_df, output_paths
 
 
 def main():
@@ -369,26 +437,34 @@ def main():
         logger.error("❌ Invalid input. Please enter a number between 1-4.")
         return
 
-    PDF_PATH = "/mnt/c/Users/sanja/Downloads/BL9000-Owners-Manual.pdf"
-    CSV_PATH = r"/mnt/c/Users/sanja/Downloads/questions based on topic - DATASET1.csv"
+    # Option to specify custom output directory
+    try:
+        output_dir = input("Enter output directory name (default: 'output'): ").strip()
+        if not output_dir:
+            output_dir = "output"
+    except:
+        output_dir = "output"
+
+    PDF_PATH = "/home/meghana/Downloads/BL9000-Owners-Manual.pdf"
+    CSV_PATH = r"/home/meghana/Downloads/questions and ground truths.csv"
 
     search_type_name = get_search_type_name(search_type)
     logger.info(f"🎯 Selected: {search_type_name}")
+    logger.info(f"📂 Output directory: {output_dir}")
 
     try:
         if CSV_PATH and os.path.exists(CSV_PATH):
             logger.info(f"📊 Running {search_type_name} pipeline...")
-            results_df, output_csv, output_json, output_excel = run_pipeline(
+            results_df, output_paths = run_pipeline(
                 pdf_path=PDF_PATH,
                 csv_path=CSV_PATH,
                 search_type=search_type,
-                output_csv=f"rag_results_type_{search_type}.csv",
-                output_json=f"rag_metadata_type_{search_type}.json",
+                output_base_dir=output_dir,
             )
             logger.info("🎉 RAG pipeline completed successfully!")
-            logger.info(f"📈 Results saved to: {output_csv}")
-            logger.info(f"📋 Metadata saved to: {output_json}")
-            logger.info(f"📊 Excel saved to: {output_excel}")
+            logger.info(f"📈 CSV Results: {output_paths['csv']}")
+            logger.info(f"📋 JSON Metadata: {output_paths['json']}")
+            logger.info(f"📊 Excel Report: {output_paths['xlsx']}")
         else:
             logger.error(f"❌ CSV file not found: {CSV_PATH}")
     except Exception as e:
