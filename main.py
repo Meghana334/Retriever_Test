@@ -59,9 +59,19 @@ class RAGPipeline:
             milvus_port: str = "19530",
             output_base_dir: str = "output",
     ):
+
+        GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+        if not GROQ_API_KEY:
+            raise ValueError("GROQ_API_KEY environment variable is not set.")
+
+        self.doc_processor = DocumentProcessor(
+            groq_api_key=GROQ_API_KEY,
+            groq_model="llama3-70b-8192",  # or whichever Groq model you prefer
+            max_chunks=20
+        )
+
         self.collection_name = collection_name
         self.cohere_embedder = CohereEmbeddings(COHERE_API_KEY)
-        self.doc_processor = DocumentProcessor()
         self.documents = []
         self.output_dirs = create_output_directories(output_base_dir)
 
