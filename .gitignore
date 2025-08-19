@@ -7,3 +7,4 @@ volumes
 *.xlsx
 *.csv
 *.json
+*.bat

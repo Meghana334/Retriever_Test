@@ -3,7 +3,7 @@ import logging
 import math
 import re
 import json
-from groq import Groq
+from langchain_ollama import ChatOllama
 from typing import List, Dict, Tuple
 from collections import defaultdict
 
@@ -237,11 +237,8 @@ class BM25Retriever:
 class DocumentProcessor:
     """Document loading and preprocessing with Groq AI-driven chunking only"""
 
-    def __init__(self, groq_api_key: str, groq_model: str = "llama-3.1-8b-instant", max_chunks: int = 20):
-        self.groq_client = Groq(api_key=groq_api_key)
-        self.groq_model = groq_model
+    def __init__(self, max_chunks: int = 20):
         self.max_chunks = max_chunks
-        self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
 
     def load_pdf(self, pdf_path: str) -> List[Document]:
         """Load PDF using PyMuPDFLoader"""
@@ -250,9 +247,9 @@ class DocumentProcessor:
 
     def ai_driven_chunking(self, text: str) -> List[Document]:
         """Chunk text using Groq LLM only (no fallback)"""
-        chunking_prompt = f"""
-        You are a document chunking expert.
-
+        messages = [
+            ("system", "You are a document chunking expert."),
+            ("human", f"""
         Split the following text into at most {self.max_chunks} meaningful chunks.
 
         Rules:
@@ -275,16 +272,21 @@ class DocumentProcessor:
         - Your output MUST be a valid JSON array of strings.
         - Do not include triple backticks, markdown formatting, or extra commentary.
         - Every string in the array must be double-quoted, with internal quotes escaped.
-        """
+        Note Just give me the text output (nothing other than the chunk text to save tokens).
+        """),
+        ]
 
-        resp = self.groq_client.chat.completions.create(
-            model=self.groq_model,
-            messages=[{"role": "user", "content": chunking_prompt}],
-            temperature=0.1,
-            max_tokens=1000
+        #TODO change this to ollama
+        llm = ChatOllama(
+            model="qwen3:4b",
+            validate_model_on_init=True,
+            temperature=0.8,
+            num_predict=256,
+            # other params ...
         )
-        content = resp.choices[0].message.content.strip()
-
+        response = llm.invoke(messages)
+        logger.info(f"Chunk text: {response}")
+        errr
         # Extract JSON array using regex
         json_match = re.search(r'\[\s*".*"\s*\]', content, re.DOTALL)
         if json_match:

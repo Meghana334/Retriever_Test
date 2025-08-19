@@ -60,13 +60,7 @@ class RAGPipeline:
             output_base_dir: str = "output",
     ):
 
-        GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-        if not GROQ_API_KEY:
-            raise ValueError("GROQ_API_KEY environment variable is not set.")
-
         self.doc_processor = DocumentProcessor(
-            groq_api_key=GROQ_API_KEY,
-            groq_model="llama3-70b-8192",  # or whichever Groq model you prefer
             max_chunks=20
         )
 
@@ -111,6 +105,8 @@ class RAGPipeline:
             return
 
         documents = self.doc_processor.load_pdf(pdf_path)
+        logger.info(f"documents: {len(documents)}")
+        # logger.info(documents)
         self.documents = self.doc_processor.preprocess_documents(documents)
 
         if not self.documents:
@@ -326,9 +322,9 @@ def run_pipeline(
     # Add Combined Classification column
     # True if ANY of the three binary classifications is True
     results_df["COMBINED CLASSIFICATION"] = (
-        results_df["BINARY CLASSIFICATION 1"] |
-        results_df["BINARY CLASSIFICATION 2"] |
-        results_df["BINARY CLASSIFICATION 3"]
+            results_df["BINARY CLASSIFICATION 1"] |
+            results_df["BINARY CLASSIFICATION 2"] |
+            results_df["BINARY CLASSIFICATION 3"]
     )
 
     # Save CSV file to organized structure
