@@ -172,7 +172,7 @@ def calculate_wer(
     logger.info(f"Saved CSV/Excel file: {csv_path}")
 
     # Read Excel file
-    df = pd.read_excel(csv_path)
+    df = pd.read_excel(csv_path, engine="openpyxl")
 
     # Initialize new columns
     df['wer_1'] = 0.0
@@ -201,7 +201,7 @@ def calculate_wer(
         )
 
     # Drop intermediate WER columns
-    df.drop(['wer_1', 'wer_2', 'wer_3'], axis=1, inplace=True)
+    # df.drop(['wer_1', 'wer_2', 'wer_3'], axis=1, inplace=True)
 
     # Save updated CSV
     df.to_csv(csv_path, index=False)
