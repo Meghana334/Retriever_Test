@@ -11,7 +11,8 @@ import tempfile
 import shutil
 from main import run_pipeline
 # Import your existing functions (assuming they're in the same file or imported)
-# from your_rag_module import run_pipeline, get_search_type_name, logger
+from jiwer import wer
+import pandas as pd
 
 app = FastAPI(
     title="Multi-Modal RAG Pipeline API",
@@ -156,6 +157,61 @@ async def run_pipeline_with_files(
     except Exception as e:
         logger.error(f"❌ Error in pipeline execution: {e}")
         raise HTTPException(status_code=500, detail=f"Pipeline execution failed: {str(e)}")
+
+
+@app.post("/wer")
+def calculate_wer(
+        csv_file: UploadFile = File(...),
+):
+    csv_path = os.path.join('output/XLSX', csv_file.filename)
+
+    # Save uploaded file
+    with open(csv_path, "wb") as buffer:
+        buffer.write(csv_file.file.read())
+
+    logger.info(f"Saved CSV/Excel file: {csv_path}")
+
+    # Read Excel file
+    df = pd.read_excel(csv_path)
+
+    # Initialize new columns
+    df['wer_1'] = 0.0
+    df['wer_2'] = 0.0
+    df['wer_3'] = 0.0
+    df['wer_best'] = 0.0
+
+    # Iterate through rows
+    for idx, row in df.iterrows():
+        gt = str(row['GROUND TRUTH'])
+
+        # Compute WERs
+        w1 = wer(gt, str(row['RETRIEVED ANSWER 1']))
+        w2 = wer(gt, str(row['RETRIEVED ANSWER 2']))
+        w3 = wer(gt, str(row['RETRIEVED ANSWER 3']))
+
+        # Store in dataframe
+        df.at[idx, 'wer_1'] = w1
+        df.at[idx, 'wer_2'] = w2
+        df.at[idx, 'wer_3'] = w3
+        df.at[idx, 'wer_best'] = min(w1, w2, w3)
+
+        # Log details
+        logger.info(
+            f"Row {idx} | WER_1: {w1:.4f}, WER_2: {w2:.4f}, WER_3: {w3:.4f}, Best: {df.at[idx, 'wer_best']:.4f}"
+        )
+
+    # Drop intermediate WER columns
+    df.drop(['wer_1', 'wer_2', 'wer_3'], axis=1, inplace=True)
+
+    # Save updated CSV
+    df.to_csv(csv_path, index=False)
+
+    # Compute average best WER
+    avg_wer = df['wer_best'].mean()
+    logger.info(f"Average Best WER: {avg_wer:.4f}")
+
+    return {'wer': avg_wer}
+
 
 
 
