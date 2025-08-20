@@ -8,3 +8,5 @@ volumes
 *.csv
 *.json
 *.bat
+
+.idea
