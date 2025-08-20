@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Request models
 class PipelineRequest(BaseModel):
-    search_type: int
+    search_type: int = 1
     output_dir: Optional[str] = "output"
     pdf_path: Optional[str] = None
     csv_path: Optional[str] = None
