@@ -61,7 +61,7 @@ class RAGPipeline:
     ):
 
         self.doc_processor = DocumentProcessor(
-            max_chunks=20
+            max_chunks=20, embedding=CohereEmbeddings(COHERE_API_KEY)
         )
 
         self.collection_name = collection_name

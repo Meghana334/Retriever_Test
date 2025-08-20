@@ -2,23 +2,16 @@ import os
 import logging
 import math
 import re
-import json
-from langchain_ollama import ChatOllama
 from typing import List, Dict, Tuple
 from collections import defaultdict
 
 # Core imports
+from langchain_experimental.text_splitter import SemanticChunker
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain.schema import Document
 import cohere
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
-
-# For intelligent chunking
-import nltk
-from transformers import GPT2TokenizerFast
-
-nltk.download("punkt", quiet=True)
+from torch.nn.functional import embedding
 
 # Optional imports for enhanced functionality
 try:
@@ -235,97 +228,104 @@ class BM25Retriever:
 
 
 class DocumentProcessor:
-    """Document loading and preprocessing with Groq AI-driven chunking only"""
+    """Document loading and preprocessing utilities with enhanced chunking"""
 
-    def __init__(self, max_chunks: int = 20):
-        self.max_chunks = max_chunks
+    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50, embedding= None):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+
+        self.splitter = SemanticChunker(embeddings=embedding)
+
+        logger.info(f"Initialized DocumentProcessor with chunk_size={chunk_size}, overlap={chunk_overlap}")
 
     def load_pdf(self, pdf_path: str) -> List[Document]:
-        """Load PDF using PyMuPDFLoader"""
-        loader = PyMuPDFLoader(pdf_path)
-        return loader.load()
+        """Load and chunk PDF document with enhanced error handling"""
+        logger.info(f"Loading PDF from: {pdf_path}")
 
-    def ai_driven_chunking(self, text: str) -> List[Document]:
-        """Chunk text using Groq LLM only (no fallback)"""
-        messages = [
-            ("system", "You are a document chunking expert."),
-            ("human", f"""
-        Split the following text into at most {self.max_chunks} meaningful chunks.
-
-        Rules:
-        1. Each chunk should contain a complete idea or concept.
-        2. Keep related sentences together.
-        3. Preserve section headers with their relevant text.
-        4. Do NOT exceed {self.max_chunks} chunks.
-        5. Respond ONLY with valid JSON — no explanations, no notes, no markdown.
-
-        Output format:
-        [
-          "chunk text 1",
-          "chunk text 2"
-        ]
-
-        Text to chunk:
-        {text}
-
-        IMPORTANT:
-        - Your output MUST be a valid JSON array of strings.
-        - Do not include triple backticks, markdown formatting, or extra commentary.
-        - Every string in the array must be double-quoted, with internal quotes escaped.
-        Note Just give me the text output (nothing other than the chunk text to save tokens).
-        """),
-        ]
-
-        #TODO change this to ollama
-        llm = ChatOllama(
-            model="qwen3:4b",
-            validate_model_on_init=True,
-            temperature=0.8,
-            num_predict=256,
-            # other params ...
-        )
-        response = llm.invoke(messages)
-        logger.info(f"Chunk text: {response}")
-        errr
-        # Extract JSON array using regex
-        json_match = re.search(r'\[\s*".*"\s*\]', content, re.DOTALL)
-        if json_match:
-            content = json_match.group(0)
-
-        # Try to fix common JSON issues
-        content = content.replace("\n", " ").replace("\r", " ")
-        content = re.sub(r",\s*]", "]", content)  # remove trailing commas
-        content = re.sub(r"’", "'", content)  # fix fancy quotes
-        content = re.sub(r"“|”", '"', content)  # fix curly double quotes
+        if not os.path.exists(pdf_path):
+            raise FileNotFoundError(f"PDF not found at path: {pdf_path}")
 
         try:
-            chunks = json.loads(content)
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ JSON parsing failed: {e}")
-            logger.error(f"LLM output was:\n{content}")
-            raise  # stop execution since you don't want fallback
+            # Load PDF pages
+            loader = PyMuPDFLoader(pdf_path)
+            pages = loader.load()
 
-        docs = []
-        for i, chunk in enumerate(chunks):
-            docs.append(Document(
-                page_content=chunk.strip(),
-                metadata={"chunk_id": i, "total_chunks": len(chunks), "chunk_type": "ai_groq"}
-            ))
-        return docs
+            if not pages:
+                raise ValueError(f"No pages loaded from PDF: {pdf_path}")
+
+            logger.info(f"Loaded {len(pages)} pages from PDF")
+
+            # Split into chunks
+            documents = self.splitter.split_documents(pages)
+            logger.info(f"Split PDF into {len(documents)} chunks")
+
+            return documents
+
+        except Exception as e:
+            logger.error(f"Error loading PDF {pdf_path}: {e}")
+            raise
+
+    def clean_text(self, text: str) -> str:
+        """Clean and normalize text"""
+        if not text:
+            return ""
+
+        # Convert to string and strip
+        text = str(text).strip()
+
+        # Remove excessive whitespace
+        text = re.sub(r'\s+', ' ', text)
+
+        # Remove special characters but keep punctuation
+        text = re.sub(r'[^\w\s\.\,\!\?\-\(\)]', ' ', text)
+
+        # Remove very short words except common ones
+        words = text.split()
+        cleaned_words = []
+
+        for word in words:
+            if len(word) > 2 or word.lower() in ['is', 'or', 'if', 'to', 'in', 'on', 'at', 'a', 'an']:
+                cleaned_words.append(word)
+
+        result = ' '.join(cleaned_words)
+        return result.strip()
 
     def preprocess_documents(self, documents: List[Document]) -> List[Document]:
-        """Preprocess documents using only AI chunking"""
+        """Preprocess documents with cleaning and filtering"""
+        if not documents:
+            logger.warning("No documents provided for preprocessing")
+            return []
+
+        logger.info(f"Preprocessing {len(documents)} documents...")
+
         processed_docs = []
-        chunk_counter = 0
-        for doc in documents:
-            cleaned_content = doc.page_content.strip()
+        skipped_count = 0
+
+        for i, doc in enumerate(documents):
+            # Clean the content
+            original_content = doc.page_content
+            cleaned_content = self.clean_text(original_content)
+
+            # Skip very short chunks
             if len(cleaned_content) < 50:
+                logger.debug(f"Skipping short document {i}: {len(cleaned_content)} chars")
+                skipped_count += 1
                 continue
-            ai_chunks = self.ai_driven_chunking(cleaned_content)
-            for chunk_doc in ai_chunks:
-                chunk_doc.metadata.update({**doc.metadata, "chunk": chunk_counter})
-                processed_docs.append(chunk_doc)
-                chunk_counter += 1
+
+            # Update document content
+            doc.page_content = cleaned_content
+
+            # Ensure metadata exists and add chunk information
+            if not hasattr(doc, 'metadata') or doc.metadata is None:
+                doc.metadata = {}
+
+            doc.metadata['chunk'] = i
+            doc.metadata['original_length'] = len(original_content)
+            doc.metadata['cleaned_length'] = len(cleaned_content)
+
+            processed_docs.append(doc)
+
+        logger.info(f"Preprocessing completed: {len(processed_docs)} documents, {skipped_count} skipped")
         return processed_docs
 
 
@@ -486,6 +486,7 @@ def reciprocal_rank_fusion(dense_results: List[Tuple[int, float]],
     return sorted_results
 
 
+# Utility functions for text preprocessing
 def preprocess_query(query: str) -> str:
     """Preprocess query for better matching"""
     if not query:
@@ -505,27 +506,28 @@ def preprocess_query(query: str) -> str:
     return query
 
 
-def test_bm25():
-    """Test BM25 functionality"""
-    documents = [
-        "The quick brown fox jumps over the lazy dog",
-        "A quick brown dog outran a quick fox",
-        "The dog was lazy but the fox was quick",
-        "Programming with Python is fun and easy"
-    ]
-
-    bm25 = BM25Retriever()
-    bm25.fit(documents)
-
-    query = "quick fox"
-    scores = bm25.get_scores(query)
-    top_docs = bm25.get_top_k(query, k=2)
-
-    print(f"Query: {query}")
-    print(f"Scores: {scores}")
-    print(f"Top documents: {top_docs}")
-
-
-if __name__ == "__main__":
-    # Run test
-    test_bm25()
+# Example usage and testing functions
+# def test_bm25():
+#     """Test BM25 functionality"""
+#     documents = [
+#         "The quick brown fox jumps over the lazy dog",
+#         "A quick brown dog outran a quick fox",
+#         "The dog was lazy but the fox was quick",
+#         "Programming with Python is fun and easy"
+#     ]
+#
+#     bm25 = BM25Retriever()
+#     bm25.fit(documents)
+#
+#     query = "quick fox"
+#     scores = bm25.get_scores(query)
+#     top_docs = bm25.get_top_k(query, k=2)
+#
+#     print(f"Query: {query}")
+#     print(f"Scores: {scores}")
+#     print(f"Top documents: {top_docs}")
+#
+#
+# if __name__ == "__main__":
+#     # Run test
+#     test_bm25()
