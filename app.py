@@ -172,7 +172,7 @@ def calculate_wer(
     logger.info(f"Saved CSV/Excel file: {csv_path}")
 
     # Read Excel file
-    df = pd.read_excel(csv_path, engine="openpyxl")
+    df = pd.read_excel(csv_path)
 
     # Initialize new columns
     df['wer_1'] = 0.0
