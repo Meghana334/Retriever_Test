@@ -2,8 +2,10 @@ import os
 import logging
 import math
 import re
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 from collections import defaultdict
+from pathlib import Path
+
 
 # Core imports
 from langchain_experimental.text_splitter import SemanticChunker
@@ -12,6 +14,8 @@ from langchain.schema import Document
 import cohere
 from sklearn.metrics.pairwise import cosine_similarity
 from torch.nn.functional import embedding
+from research.semantic_index import PDFToMarkdownProcessor
+
 
 # Optional imports for enhanced functionality
 try:
@@ -228,42 +232,169 @@ class BM25Retriever:
 
 
 class DocumentProcessor:
-    """Document loading and preprocessing utilities with enhanced chunking"""
+    """Document loading and preprocessing utilities with TOC-based chunking"""
 
-    def __init__(self, chunk_size: int = 500, chunk_overlap: int = 50, embedding= None):
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+    def __init__(self,
+                 mistral_api_key: str,
+                 embedding=None,
+                 min_chunk_size: int = 100,
+                 max_chunk_size: int = 2000):
+        """
+        Initialize DocumentProcessor with TOC-based chunking capabilities.
 
-        self.splitter = SemanticChunker(embeddings=embedding)
+        Args:
+            mistral_api_key: API key for Mistral OCR
+            min_chunk_size: Minimum size for TOC chunks
+            max_chunk_size: Maximum size for TOC chunks
+        """
+        self.min_chunk_size = min_chunk_size
+        self.max_chunk_size = max_chunk_size
 
-        logger.info(f"Initialized DocumentProcessor with chunk_size={chunk_size}, overlap={chunk_overlap}")
+        # Initialize TOC extractor
+        self.toc_processor = PDFToMarkdownProcessor(mistral_api_key)
+
+        logger.info(f"Initialized DocumentProcessor with TOC-based chunking")
 
     def load_pdf(self, pdf_path: str) -> List[Document]:
-        """Load and chunk PDF document with enhanced error handling"""
+        """Load and chunk PDF document with TOC-based chunking"""
         logger.info(f"Loading PDF from: {pdf_path}")
 
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF not found at path: {pdf_path}")
 
         try:
-            # Load PDF pages
-            loader = PyMuPDFLoader(pdf_path)
-            pages = loader.load()
-
-            if not pages:
-                raise ValueError(f"No pages loaded from PDF: {pdf_path}")
-
-            logger.info(f"Loaded {len(pages)} pages from PDF")
-
-            # Split into chunks
-            documents = self.splitter.split_documents(pages)
-            logger.info(f"Split PDF into {len(documents)} chunks")
-
-            return documents
+            return self._load_pdf_with_toc_chunking(pdf_path)
 
         except Exception as e:
             logger.error(f"Error loading PDF {pdf_path}: {e}")
             raise
+
+    def _load_pdf_with_toc_chunking(self, pdf_path: str) -> List[Document]:
+        """Load PDF and chunk based on Table of Contents"""
+        logger.info("Using TOC-based chunking...")
+
+        pdf_path_obj = Path(pdf_path)
+
+        # Step 1: Extract markdown content using Mistral OCR
+        logger.info("Converting PDF to markdown...")
+        markdown_content = self.toc_processor.pdf_to_markdown(pdf_path_obj)
+
+        # Step 2: Extract TOC from markdown
+        logger.info("Extracting table of contents...")
+        toc = self.toc_processor.extract_table_of_contents(markdown_content)
+
+        if not toc:
+            raise ValueError("No TOC found in the document")
+
+        # Step 3: Create chunks based on TOC sections
+        documents = self._create_toc_based_chunks(markdown_content, toc, pdf_path)
+
+        logger.info(f"Created {len(documents)} TOC-based chunks")
+        return documents
+
+    def _create_toc_based_chunks(self, markdown_content: str, toc: List[Dict], pdf_path: str) -> List[Document]:
+        """Create document chunks based on TOC sections"""
+        documents = []
+        lines = markdown_content.split('\n')
+
+        for i, heading in enumerate(toc):
+            # Determine the content boundaries for this section
+            start_line = heading['line_number'] - 1  # Convert to 0-based index
+
+            # Find the end line (next heading at same or higher level, or end of document)
+            end_line = len(lines)
+            current_level = heading['level']
+
+            for j in range(i + 1, len(toc)):
+                next_heading = toc[j]
+                if next_heading['level'] <= current_level:
+                    end_line = next_heading['line_number'] - 1
+                    break
+
+            # Extract section content
+            section_lines = lines[start_line:end_line]
+            section_content = '\n'.join(section_lines).strip()
+
+            # Skip if section is too short
+            if len(section_content) < self.min_chunk_size:
+                logger.debug(f"Skipping short section: {heading['text']}")
+                continue
+
+            # Handle very large sections by further splitting
+            if len(section_content) > self.max_chunk_size:
+                sub_documents = self._split_large_section(section_content, heading, pdf_path)
+                documents.extend(sub_documents)
+            else:
+                # Create document for this section
+                doc = Document(
+                    page_content=section_content,
+                    metadata={
+                        'source': pdf_path,
+                        'heading': heading['text'],
+                        'heading_level': heading['level'],
+                        'section_start_line': start_line + 1,
+                        'section_end_line': end_line,
+                        'chunk_type': 'toc_section',
+                        'content_length': len(section_content)
+                    }
+                )
+                documents.append(doc)
+
+        return documents
+
+    def _split_large_section(self, content: str, heading: Dict, pdf_path: str) -> List[Document]:
+        """Split large sections into smaller chunks while preserving context"""
+        documents = []
+
+        # Try to split by paragraphs first
+        paragraphs = content.split('\n\n')
+
+        current_chunk = ""
+        chunk_count = 0
+
+        for paragraph in paragraphs:
+            # Check if adding this paragraph would exceed max size
+            potential_chunk = current_chunk + '\n\n' + paragraph if current_chunk else paragraph
+
+            if len(potential_chunk) <= self.max_chunk_size:
+                current_chunk = potential_chunk
+            else:
+                # Save current chunk if it's substantial
+                if len(current_chunk) >= self.min_chunk_size:
+                    chunk_count += 1
+                    doc = Document(
+                        page_content=current_chunk,
+                        metadata={
+                            'source': pdf_path,
+                            'heading': heading['text'],
+                            'heading_level': heading['level'],
+                            'chunk_type': 'toc_subsection',
+                            'subsection_number': chunk_count,
+                            'content_length': len(current_chunk)
+                        }
+                    )
+                    documents.append(doc)
+
+                # Start new chunk with current paragraph
+                current_chunk = paragraph
+
+        # Don't forget the last chunk
+        if len(current_chunk) >= self.min_chunk_size:
+            chunk_count += 1
+            doc = Document(
+                page_content=current_chunk,
+                metadata={
+                    'source': pdf_path,
+                    'heading': heading['text'],
+                    'heading_level': heading['level'],
+                    'chunk_type': 'toc_subsection',
+                    'subsection_number': chunk_count,
+                    'content_length': len(current_chunk)
+                }
+            )
+            documents.append(doc)
+
+        return documents
 
     def clean_text(self, text: str) -> str:
         """Clean and normalize text"""
@@ -319,7 +450,7 @@ class DocumentProcessor:
             if not hasattr(doc, 'metadata') or doc.metadata is None:
                 doc.metadata = {}
 
-            doc.metadata['chunk'] = i
+            doc.metadata['chunk_id'] = i
             doc.metadata['original_length'] = len(original_content)
             doc.metadata['cleaned_length'] = len(cleaned_content)
 
@@ -327,6 +458,36 @@ class DocumentProcessor:
 
         logger.info(f"Preprocessing completed: {len(processed_docs)} documents, {skipped_count} skipped")
         return processed_docs
+
+    def get_chunk_info(self, documents: List[Document]) -> Dict[str, Any]:
+        """Get information about the created chunks"""
+        if not documents:
+            return {}
+
+        chunk_types = defaultdict(int)
+        total_content_length = 0
+        headings = []
+
+        for doc in documents:
+            chunk_type = doc.metadata.get('chunk_type', 'unknown')
+            chunk_types[chunk_type] += 1
+            total_content_length += len(doc.page_content)
+
+            if 'heading' in doc.metadata:
+                headings.append({
+                    'heading': doc.metadata['heading'],
+                    'level': doc.metadata['heading_level'],
+                    'content_length': len(doc.page_content)
+                })
+
+        return {
+            'total_chunks': len(documents),
+            'chunk_types': dict(chunk_types),
+            'total_content_length': total_content_length,
+            'average_chunk_length': total_content_length / len(documents),
+            'headings_found': headings,
+            'toc_sections': len(headings)
+        }
 
 
 class ReRanker:

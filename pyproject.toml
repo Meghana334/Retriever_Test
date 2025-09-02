@@ -35,10 +35,12 @@ dependencies = [
     "xlsxwriter (>=3.2.5,<4.0.0)",
     "langchain-experimental (>=0.3.4,<0.4.0)",
     "langchain-ollama (>=0.3.6,<0.4.0)",
-    "torch @ https://download.pytorch.org/whl/cu129/torch-2.8.0%2Bcu129-cp313-cp313-win_amd64.whl",
+    "torch",
     "nltk (>=3.9.1,<4.0.0)",
     "jiwer (>=4.0.0,<5.0.0)",
     "openpyxl (>=3.1.5,<4.0.0)",
+    "pypdf2 (>=3.0.1,<4.0.0)",
+    "pdfplumber (>=0.11.7,<0.12.0)",
 ]
 
 

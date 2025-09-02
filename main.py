@@ -30,6 +30,10 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 if not COHERE_API_KEY:
     raise ValueError("COHERE_API_KEY environment variable is not set.")
 
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+if not MISTRAL_API_KEY:
+    raise ValueError("MISTRAL_API_KEY environment variable is not set.")
+
 DEFAULT_COLLECTION_NAME = "rag_documents"
 
 
@@ -61,6 +65,7 @@ class RAGPipeline:
     ):
 
         self.doc_processor = DocumentProcessor(
+            mistral_api_key=MISTRAL_API_KEY,
             embedding=CohereEmbeddings(COHERE_API_KEY)
         )
 
