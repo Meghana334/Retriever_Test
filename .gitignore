@@ -10,3 +10,5 @@ volumes
 *.bat
 
 .idea
+out
+output
